@@ -29,7 +29,8 @@ Collect these facts. Do not modify anything in this step.
   `pyproject.toml`, `setup.py`, `*.py` → Python.
   `package.json`, `*.ts`, `*.js` → JS/TS.
   `go.mod` → Go. `Cargo.toml` → Rust. `*.sh` → shell.
-- Package manager: `uv.lock` → uv. `requirements*.txt` without `uv.lock` → pip.
+- Package manager: `uv.lock`, `[tool.uv]` or the `uv_build` backend in `pyproject.toml` → uv
+  (run `uv lock` when `uv.lock` is missing). `requirements*.txt` otherwise → pip.
 - Container: `Dockerfile`, `Containerfile`, `docker-compose.yml`, `compose.yml`, and a
   statement in the docs that tests or the app run in a container.
 - Test command: from CI workflows, `README*`, `CLAUDE.md`, `pyproject.toml`.
