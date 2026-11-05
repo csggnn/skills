@@ -6,6 +6,18 @@ argument-hint: [path to repo, default current directory]
 Set up CI and development tools in the target repository. The target is `$ARGUMENTS` or the
 current directory.
 
+## Principles
+
+- `.pre-commit-config.yaml` defines every check that reads files as text: hygiene, Ruff,
+  shellcheck, gitleaks, zizmor. Local commits and CI run the same file.
+- Checks that import or run the project's code (tests, type checker, the app) run in the
+  project environment: `uv run` for a uv project, the repo's container for a containerized
+  repo. pre-commit runs neither.
+- Every version is pinned and Dependabot updates it: GitHub Actions by commit hash, pre-commit
+  hooks by `rev`, packages by lockfile, OpenSpec by `package.json`.
+- Every update reaches the default branch through a pull request that passes the required CI
+  checks.
+
 ## 1. Detect
 
 Collect these facts. Do not modify anything in this step.
@@ -16,12 +28,21 @@ Collect these facts. Do not modify anything in this step.
 - Languages, from manifests and file extensions:
   `pyproject.toml`, `setup.py`, `*.py` → Python.
   `package.json`, `*.ts`, `*.js` → JS/TS.
-  `go.mod` → Go. `Cargo.toml` → Rust.
+  `go.mod` → Go. `Cargo.toml` → Rust. `*.sh` → shell.
+- Package manager: `uv.lock` → uv. `requirements*.txt` without `uv.lock` → pip.
+- Container: `Dockerfile`, `Containerfile`, `docker-compose.yml`, `compose.yml`, and a
+  statement in the docs that tests or the app run in a container.
+- Test command: from CI workflows, `README*`, `CLAUDE.md`, `pyproject.toml`.
 - Code expected: true unless the repo holds only docs, data or config, or the user said so.
-- Existing setup: `.github/workflows/`, `.pre-commit-config.yaml`, `.coderabbit.yaml`,
-  `openspec/`, `.claude/settings*.json`, `[tool.ruff]`, `.editorconfig`, `.gitignore`,
-  `.github/dependabot.yml`, `CLAUDE.md`, `LICENSE*`, `COPYING*`, the `license` field in
-  `pyproject.toml` or `package.json`.
+- Existing setup: `.github/workflows/` (and each `uses:` that is not a 40-character commit
+  hash), `.pre-commit-config.yaml`, `git config core.hooksPath` and its folder, scripts that
+  wrap a linter (e.g. `scripts/ruff.sh`), `.claude/settings*.json` hooks that call such a
+  script, `.coderabbit.yaml`, `openspec/`, `package.json`, `[tool.ruff]` or `ruff.toml`,
+  `.editorconfig`, `.gitignore`, `.github/dependabot.yml`, `CLAUDE.md`, `LICENSE*`,
+  `COPYING*`, the `license` field in `pyproject.toml` or `package.json`.
+- GitHub settings: `gh api repos/{owner}/{repo} -q '{auto_merge: .allow_auto_merge, security: .security_and_analysis}'`
+  and `gh api repos/{owner}/{repo}/branches/{default}/protection` (404: none; 403: needs a
+  public repo or GitHub Pro).
 
 Print a short table of the findings.
 
@@ -30,7 +51,7 @@ Print a short table of the findings.
 Compute defaults from the rules below. Ask with AskUserQuestion, `multiSelect: true`, one
 question per group. Append " (Recommended)" to the label of each default-on option. Skip
 options that are already set up and list them as "present" in the question text. Skip
-options whose language does not match.
+options whose language or precondition does not match.
 
 | Group | Tool | Default on when |
 |---|---|---|
@@ -38,16 +59,16 @@ options whose language does not match.
 | Review & AI | OpenSpec | code expected |
 | Review & AI | simplicity-rules plugin | Python, or no language detected |
 | Review & AI | CLAUDE.md via `/init` | code exists and no CLAUDE.md |
-| Lint & test | Ruff (lint + format) | Python, or no language detected |
-| Lint & test | Type checker (pyright) | off |
-| Lint & test | pytest scaffold | Python and no tests directory |
-| Lint & test | Language linter for non-Python (Biome, golangci-lint, clippy) | matching language |
-| CI | GitHub Actions CI workflow | GitHub remote exists, or always if the user plans one |
-| CI | Dependabot (github-actions + package ecosystem) | GitHub remote exists |
-| CI | zizmor (workflow security lint) | CI workflow selected |
-| CI | Branch protection requiring CI | off (outward-facing change) |
-| Hygiene | pre-commit hooks | on |
-| Hygiene | gitleaks secret scan | on |
+| Checks | pre-commit (hygiene hooks, gitleaks) | always |
+| Checks | Ruff (lint + format) | Python, or no language detected |
+| Checks | shellcheck | shell scripts exist |
+| Checks | Type checker (pyright) | off |
+| Checks | pytest scaffold | Python, uv project and no tests directory |
+| Checks | Language linter for non-Python (Biome, golangci-lint, clippy) | matching language |
+| CI | GitHub Actions CI workflow | GitHub remote exists |
+| CI | zizmor and actions pinned by hash | workflows exist or CI selected |
+| CI | Dependabot | GitHub remote exists |
+| CI | Branch protection requiring CI | public repo, or private repo on GitHub Pro |
 | Hygiene | `.editorconfig` + `.gitignore` | missing |
 | Hygiene | GitHub secret scanning + push protection | public GitHub repo |
 
@@ -68,12 +89,16 @@ this machine, or `settings.json` committed for all contributors). Default:
 ## 3. Apply
 
 Apply selected tools in this order. Read each existing file before changing it. Merge into
-existing config instead of overwriting it. Resolve current versions at run time
-(`pre-commit autoupdate`, `uv add`, release pages); do not use versions from memory.
+existing config instead of overwriting it. Resolve current versions at run time; do not use
+versions from memory:
+- pre-commit hooks: `uvx pre-commit autoupdate`.
+- A GitHub Action: latest tag `gh release view -R <owner>/<action> --json tagName -q .tagName`,
+  its commit `gh api repos/<owner>/<action>/commits/<tag> -q .sha`.
+- PyPI and npm packages: `uv add`, `npm install`, `npm view <package> version`.
 
 ### Ruff
-- Python with uv: `uv add --dev ruff`. Otherwise `uvx ruff` in hooks and CI.
-- Add to `pyproject.toml`:
+- Configuration in `pyproject.toml`, or `ruff.toml` when the repo has no `pyproject.toml`.
+  Keep an existing configuration. A new one:
   ```toml
   [tool.ruff]
   line-length = 100
@@ -84,37 +109,59 @@ existing config instead of overwriting it. Resolve current versions at run time
   [tool.ruff.lint.mccabe]
   max-complexity = 10
   ```
-- Run `ruff check --fix` and `ruff format`. Report remaining findings; do not hand-fix them
-  unless asked.
+- Ruff runs from the `ruff-pre-commit` hooks. Do not add it as a project dependency.
+- Run the hooks on all files. Report remaining findings; do not hand-fix them unless asked.
 
 ### Type checker
-- `uv add --dev pyright`. Add `[tool.pyright]` with `typeCheckingMode = "standard"`.
+- uv project: `uv add --dev pyright`, `[tool.pyright]` with `typeCheckingMode = "standard"`,
+  and a CI step `uv run pyright`. Containerized repo: a CI step that runs pyright in the
+  container.
 
 ### pytest
 - `uv add --dev pytest`. Create `tests/test_smoke.py` importing the package.
 
 ### pre-commit
-- `.pre-commit-config.yaml` with hooks for the selected tools:
-  `pre-commit-hooks` (trailing-whitespace, end-of-file-fixer, check-yaml, check-toml,
-  check-added-large-files), `ruff-pre-commit` (ruff-check `--fix`, ruff-format),
-  `gitleaks`, `zizmor` when selected.
-- Run `pre-commit autoupdate`, `pre-commit install`, `pre-commit run --all-files`.
+- `.pre-commit-config.yaml` with:
+  - `pre-commit/pre-commit-hooks`: trailing-whitespace, end-of-file-fixer, check-yaml,
+    check-toml, check-json, check-added-large-files.
+  - `astral-sh/ruff-pre-commit`: `ruff-check` with `args: [--fix]`, `ruff-format`.
+  - `shellcheck-py/shellcheck-py`: `shellcheck`, when selected.
+  - `gitleaks/gitleaks`: `gitleaks`.
+  - `zizmorcore/zizmor-pre-commit`: `zizmor`, when selected.
+  - `repo: local` hooks with `language: system` for repo-specific steps that need a
+    project tool, e.g. a diagram render that runs a container.
+- Replace an existing custom hook setup:
+  - Port each step of the `core.hooksPath` hook to a pre-commit hook. Then delete the hook
+    folder and run `git config --unset core.hooksPath`. `pre-commit install` refuses to run
+    while `core.hooksPath` is set.
+  - Replace calls to a linter wrapper script with the pre-commit hook, e.g. a Claude Code
+    hook runs `uvx pre-commit run ruff-check --files "$file"` and
+    `uvx pre-commit run ruff-format --files "$file"`. Delete the wrapper when nothing calls it.
+- Run `uvx pre-commit autoupdate`, `uvx pre-commit install`,
+  `uvx pre-commit run --all-files`.
 
 ### GitHub Actions CI
 - `.github/workflows/ci.yml`:
   - Triggers: `push` to the default branch, `pull_request`.
-  - `permissions: contents: read`.
+  - Top-level `permissions: contents: read`.
   - `concurrency` keyed on workflow and ref, `cancel-in-progress: true`.
-  - Python job: `actions/checkout`, `astral-sh/setup-uv`, `uv sync --locked`,
-    `uv run ruff check`, `uv run ruff format --check`, type check if selected,
-    `uv run pytest` if tests exist.
-  - Non-Python jobs: the equivalent lint, format check and test commands.
-  - `persist-credentials: false` on checkout.
-- Run `uvx zizmor .github/workflows` when zizmor is selected.
+  - Job `check`:
+    1. `actions/checkout` with `persist-credentials: false`.
+    2. `astral-sh/setup-uv`.
+    3. `uvx pre-commit@<version> run --all-files --show-diff-on-failure`.
+    4. Project checks, each with `if: ${{ !cancelled() }}`: `uv sync --locked` and
+       `uv run pytest` for a uv project; the type checker when selected.
+  - A containerized repo keeps its test workflow. Replace a lint workflow that duplicates a
+    pre-commit hook with the `check` job.
+- Pin every `uses:` in every workflow to a commit hash with the tag as a comment:
+  `uses: actions/checkout@<sha> # v7.0.1`. A major-version tag such as `@v4` is pinned to
+  the commit of the latest release; run CI before merging that upgrade.
 
 ### Dependabot
-- `.github/dependabot.yml` with `github-actions` and the package ecosystem (`uv`, `npm`,
-  `gomod`, `cargo`), weekly schedule, grouped minor and patch updates.
+- `.github/dependabot.yml`, one entry per ecosystem present: `github-actions`,
+  `pre-commit`, `uv` or `pip`, `npm`, `gomod`, `cargo`, `docker` (for a Dockerfile).
+  Each entry: `directory: /`, `schedule: interval: weekly`, `cooldown: default-days: 7`,
+  and a group for minor and patch updates.
 
 ### CodeRabbit
 - Write `.coderabbit.yaml`:
@@ -140,12 +187,13 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
 `csggnn/simplicity-rules` is the reference setup.
 
 - Pin the CLI: `npm install --save-dev --save-exact --ignore-scripts @fission-ai/openspec@latest`.
-  Commit `package.json` and `package-lock.json`. Add `node_modules/` to `.gitignore`.
+  Set `"private": true` in `package.json`. Commit `package.json` and `package-lock.json`.
+  Add `node_modules/` to `.gitignore`.
 - `npx openspec init --tools claude --no-animation` in the repo root.
 - Merge the `rules:` block of `openspec-rules.yaml` (in this skill's folder) into
   `openspec/config.yaml`. Repo-specific rules go after the shared rules of the same artifact.
 - The `.claude/skills/openspec-*` files are generated. Do not edit them.
-- CI workflow, after the other checks:
+- Steps in the `check` job, after the other checks:
   ```yaml
       - name: Install OpenSpec
         if: ${{ !cancelled() }}
@@ -161,16 +209,17 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
           npx openspec update --force > /dev/null
           git diff --exit-code -- .claude
   ```
-- Dependabot: add an `npm` entry (directory `/`, weekly, `cooldown: default-days: 7`).
+  A repo without a `check` job gets these steps in an `openspec` job in
+  `.github/workflows/openspec.yml`.
+- Dependabot: the `npm` entry.
 - Copy `.github/workflows/openspec-regenerate.yml` from `csggnn/simplicity-rules`
   (`gh api repos/csggnn/simplicity-rules/contents/.github/workflows/openspec-regenerate.yml -q .content | base64 -d`).
   It regenerates the files on a Dependabot bump, approves the CI runs of its commit and
   enables auto-merge.
 - Auto-merge needs "Allow auto-merge"
   (`gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true`) and branch protection
-  that requires the CI check. Without a required check, auto-merge merges before CI runs.
-  Select "Branch protection requiring CI" when OpenSpec is selected. Branch protection on
-  a private repo needs GitHub Pro.
+  that requires the CI checks. Without a required check, auto-merge merges before CI runs.
+  Select "Branch protection requiring CI" when OpenSpec is selected.
 - When the approval step in the workflow fails, the Dependabot pull request stays open with
   CI runs awaiting approval. Approve them once in the Actions tab. After that merge, the
   bot's commit is on the default branch and later runs need no approval.
@@ -209,12 +258,6 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
 - Update an existing License section in `README.md`. Add a one-line `## License` section
   when the README has none.
 
-### GitHub settings (outward-facing, confirm before each)
-- Secret scanning and push protection:
-  `gh api -X PATCH repos/{owner}/{repo} -f security_and_analysis[secret_scanning][status]=enabled -f security_and_analysis[secret_scanning_push_protection][status]=enabled`.
-- Branch protection: run only after CI has passed once on the default branch, so the check
-  name exists. Require that check and pull requests before merge.
-
 ### Documentation
 Runs after all tools are applied and before CLAUDE.md.
 - Read the repo docs: `README*`, `CONTRIBUTING*`, `docs/`, `DEVELOPMENT*`, `HACKING*`,
@@ -224,26 +267,53 @@ Runs after all tools are applied and before CLAUDE.md.
   2. `CONTRIBUTING.md` or a development page under `docs/`.
   3. A new `## Development` section at the end of `README.md`.
   4. A new `README.md` with the repo name and that section.
-- Write a short section, at most about 15 lines:
-  - One-time setup command (e.g. `uv sync`, `pre-commit install`).
-  - Command that runs all local checks (e.g. `pre-commit run --all-files`).
-  - What CI runs and on which events.
+- Write a short section, at most about 20 lines:
+  - Development requirements, one line each: uv (pre-commit and its hooks), Node.js
+    (OpenSpec), the container runtime when tests run in a container. A user who only runs
+    the project does not need them; keep the user setup separate.
+  - One-time setup commands, e.g. `uvx pre-commit install`, `uv sync`,
+    `npm ci --ignore-scripts`.
+  - Command that runs all local checks, e.g. `uvx pre-commit run --all-files`.
+  - What CI runs and on which events, and the required checks.
   - Other automation in use, one line each: Dependabot, CodeRabbit, OpenSpec,
     simplicity-rules.
 - Match the target file's heading levels, tone and formatting. Reuse the commands from the
   config files; do not invent commands.
 - Describe only tools that are present after this run. If the target already describes CI,
-  update that text instead of adding a second description.
+  hooks or lint commands, update that text instead of adding a second description. Remove
+  text about deleted hooks and scripts.
 - In `CLAUDE.md` or `AGENTS.md`, when present and not the target, add the local check
   command if it is missing.
 
 ### CLAUDE.md
 - Invoke the `init` skill last, so it sees the final setup and docs.
 
-## 4. Verify and report
+## 4. Publish
 
-- Run each installed check locally: pre-commit, ruff, type checker, tests, zizmor.
+- Commit with the `commit-properly` skill, one commit per tool, on a branch.
+- Push the branch and open a pull request. Wait for CI. Fix failures in the same branch.
+
+### GitHub settings (outward-facing, confirm before each)
+- Secret scanning and push protection:
+  `gh api -X PATCH repos/{owner}/{repo} -f security_and_analysis[secret_scanning][status]=enabled -f security_and_analysis[secret_scanning_push_protection][status]=enabled`.
+- Branch protection, after the CI jobs have run once, so their check names exist. Require
+  each CI job that runs on every pull request, pull requests before merge, and the same
+  rules for administrators:
+  ```
+  gh api -X PUT repos/{owner}/{repo}/branches/{default}/protection --input - <<'EOF'
+  {"required_status_checks": {"strict": false, "contexts": ["check"]},
+   "enforce_admins": true,
+   "required_pull_request_reviews": {"required_approving_review_count": 0},
+   "restrictions": null}
+  EOF
+  ```
+  A job limited by `paths:` cannot be required: a pull request that skips it never merges.
+- Allow auto-merge, when OpenSpec is selected.
+
+## 5. Verify and report
+
+- Run each check locally: `uvx pre-commit run --all-files`, the tests, the type checker.
 - Print a table: tool, status (added / present / skipped / failed), files touched.
 - Name the doc file and section that holds the CI description.
-- List manual steps left to the user (CodeRabbit app install, secrets, first CI run).
-- Do not commit. Offer the `commit-properly` skill, one commit per tool.
+- List manual steps left to the user (CodeRabbit app install, secrets, first Dependabot
+  approval).
