@@ -163,6 +163,14 @@ versions from memory:
   `pre-commit`, `uv` or `pip`, `npm`, `gomod`, `cargo`, `docker` (for a Dockerfile).
   Each entry: `directory: /`, `schedule: interval: weekly`, `cooldown: default-days: 7`,
   and a group for minor and patch updates.
+- Copy `dependabot-automerge.yml` (in this skill's folder) to `.github/workflows/`. It
+  enables auto-merge on every Dependabot pull request without a major version update.
+  Resolve the current `dependabot/fetch-metadata` commit and update its `uses:` line.
+- Auto-merge needs "Allow auto-merge"
+  (`gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true`) and branch protection
+  that requires the CI checks. Without a required check, auto-merge merges before CI runs.
+  Select "Branch protection requiring CI" when Dependabot is selected. Without branch
+  protection, skip the workflow and state that Dependabot pull requests need a manual merge.
 
 ### CodeRabbit
 - Write `.coderabbit.yaml`:
@@ -216,11 +224,7 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
 - Copy `.github/workflows/openspec-regenerate.yml` from `csggnn/simplicity-rules`
   (`gh api repos/csggnn/simplicity-rules/contents/.github/workflows/openspec-regenerate.yml -q .content | base64 -d`).
   It regenerates the files on a Dependabot bump, approves the CI runs of its commit and
-  enables auto-merge.
-- Auto-merge needs "Allow auto-merge"
-  (`gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true`) and branch protection
-  that requires the CI checks. Without a required check, auto-merge merges before CI runs.
-  Select "Branch protection requiring CI" when OpenSpec is selected.
+  enables auto-merge. Auto-merge has the requirements listed under Dependabot.
 - When the approval step in the workflow fails, the Dependabot pull request stays open with
   CI runs awaiting approval. Approve them once in the Actions tab. After that merge, the
   bot's commit is on the default branch and later runs need no approval.
@@ -309,7 +313,7 @@ Runs after all tools are applied and before CLAUDE.md.
   EOF
   ```
   A job limited by `paths:` cannot be required: a pull request that skips it never merges.
-- Allow auto-merge, when OpenSpec is selected.
+- Allow auto-merge, when Dependabot is selected.
 
 ## 5. Verify and report
 
