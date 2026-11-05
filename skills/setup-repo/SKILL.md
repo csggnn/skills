@@ -1,6 +1,6 @@
 ---
 name: setup-repo
-description: Set up CI and development tools in a new or existing repository after asking which ones to add
+description: Set up CI and development tools in a new or existing repository after asking which ones to add, or sync a repository set up earlier with the current templates
 argument-hint: [path to repo, default current directory]
 ---
 Set up CI and development tools in the target repository. The target is `$ARGUMENTS` or the
@@ -17,6 +17,37 @@ current directory.
   hooks by `rev`, packages by lockfile, OpenSpec by `package.json`.
 - Every update reaches the default branch through a pull request that passes the required CI
   checks.
+- `templates/` in this skill's folder holds the standard files. Every repo gets the same
+  files. A repo-specific deviation from a template carries a comment that starts with
+  `# exception:` and states its reason.
+- uv and pre-commit run at their latest release. The hooks and lockfiles they run are pinned.
+
+## Templates
+
+| File | Repo path |
+|---|---|
+| `templates/ci.yml` | `.github/workflows/ci.yml` |
+| `templates/pre-commit-config.yaml` | `.pre-commit-config.yaml` |
+| `templates/dependabot.yml` | `.github/dependabot.yml` |
+| `templates/dependabot-automerge.yml` | `.github/workflows/dependabot-automerge.yml` |
+| `templates/openspec-regenerate.yml` | `.github/workflows/openspec-regenerate.yml` |
+| `templates/openspec-rules.yaml` | `rules:` block of `openspec/config.yaml` |
+| `templates/coderabbit.yaml` | `.coderabbit.yaml` |
+| `templates/editorconfig` | `.editorconfig` |
+
+Placeholders, filled when a file is written:
+- `PIN`: `<commit sha> # <tag>` of the action's latest release.
+- `LATEST`: any tag, then `uvx pre-commit autoupdate` sets the latest.
+- `DEFAULT_BRANCH`, `TEST_COMMAND`, `ECOSYSTEM`: from the detected facts.
+
+A `# block: <tool>` ... `# end block` section is written only when that tool is selected.
+The marker lines are not written.
+
+## Mode
+
+- **Sync** when the repo has `.pre-commit-config.yaml` and `.github/workflows/ci.yml`
+  with a `check` job. Skip step 2 and run [Sync](#sync).
+- **Setup** otherwise. Run steps 1 to 5.
 
 ## 1. Detect
 
@@ -46,6 +77,22 @@ Collect these facts. Do not modify anything in this step.
   public repo or GitHub Pro).
 
 Print a short table of the findings.
+
+## Sync
+
+Brings a repo set up earlier to the current templates.
+
+1. Run step 1.
+2. Compare each template with its repo file. Ignore versions: Dependabot owns them.
+   Classify each difference:
+   - In the template, missing from the repo: add it.
+   - In the repo, missing from the template, with an `# exception:` comment: keep it.
+   - In the repo, missing from the template, without an `# exception:` comment: ask whether
+     to remove it or keep it with an `# exception:` comment.
+3. Add missing Dependabot ecosystems, missing templates whose tool applies, and the
+   GitHub settings of step 4 that are not set.
+4. Update the docs as in [Documentation](#documentation).
+5. Publish as in step 4, one commit per tool, and report as in step 5.
 
 ## 2. Ask
 
@@ -122,15 +169,10 @@ versions from memory:
 - `uv add --dev pytest`. Create `tests/test_smoke.py` importing the package.
 
 ### pre-commit
-- `.pre-commit-config.yaml` with:
-  - `pre-commit/pre-commit-hooks`: trailing-whitespace, end-of-file-fixer, check-yaml,
-    check-toml, check-json, check-added-large-files.
-  - `astral-sh/ruff-pre-commit`: `ruff-check` with `args: [--fix]`, `ruff-format`.
-  - `shellcheck-py/shellcheck-py`: `shellcheck`, when selected.
-  - `gitleaks/gitleaks`: `gitleaks`.
-  - `zizmorcore/zizmor-pre-commit`: `zizmor`, when selected.
-  - `repo: local` hooks with `language: system` for repo-specific steps that need a
-    project tool, e.g. a diagram render that runs a container.
+- `templates/pre-commit-config.yaml`, with the Ruff, shellcheck and zizmor blocks when
+  selected.
+- Repo-specific steps that need a project tool, e.g. a diagram render that runs a container,
+  are `repo: local` hooks with `language: system` and an `# exception:` comment.
 - Replace an existing custom hook setup:
   - Port each step of the `core.hooksPath` hook to a pre-commit hook. Then delete the hook
     folder and run `git config --unset core.hooksPath`. `pre-commit install` refuses to run
@@ -142,30 +184,21 @@ versions from memory:
   `uvx pre-commit run --all-files`.
 
 ### GitHub Actions CI
-- `.github/workflows/ci.yml`:
-  - Triggers: `push` to the default branch, `pull_request`.
-  - Top-level `permissions: contents: read`.
-  - `concurrency` keyed on workflow and ref, `cancel-in-progress: true`.
-  - Job `check`:
-    1. `actions/checkout` with `persist-credentials: false`.
-    2. `astral-sh/setup-uv`.
-    3. `uvx pre-commit@<version> run --all-files --show-diff-on-failure`.
-    4. Project checks, each with `if: ${{ !cancelled() }}`: `uv sync --locked` and
-       `uv run pytest` for a uv project; the type checker when selected.
-  - A containerized repo keeps its test workflow. Replace a lint workflow that duplicates a
-    pre-commit hook with the `check` job.
+- `templates/ci.yml`. The `uv project` block for a uv project, with `TEST_COMMAND` such as
+  `uv run pytest`. The type checker step goes in that block when selected.
+- A containerized repo runs its tests in a second job of `ci.yml` that builds the container,
+  with an `# exception:` comment. Replace a lint workflow that duplicates a pre-commit hook
+  with the `check` job.
+- A hook that cannot run in CI is listed in `env: SKIP:` of the pre-commit step, with an
+  `# exception:` comment.
 - Pin every `uses:` in every workflow to a commit hash with the tag as a comment:
   `uses: actions/checkout@<sha> # v7.0.1`. A major-version tag such as `@v4` is pinned to
   the commit of the latest release; run CI before merging that upgrade.
 
 ### Dependabot
-- `.github/dependabot.yml`, one entry per ecosystem present: `github-actions`,
-  `pre-commit`, `uv` or `pip`, `npm`, `gomod`, `cargo`, `docker` (for a Dockerfile).
-  Each entry: `directory: /`, `schedule: interval: weekly`, `cooldown: default-days: 7`,
-  and a group for minor and patch updates.
-- Copy `dependabot-automerge.yml` (in this skill's folder) to `.github/workflows/`. It
-  enables auto-merge on every Dependabot pull request without a major version update.
-  Resolve the current `dependabot/fetch-metadata` commit and update its `uses:` line.
+- `templates/dependabot.yml`, one entry per ecosystem present.
+- `templates/dependabot-automerge.yml`. It enables auto-merge on every Dependabot pull
+  request without a major version update.
 - Auto-merge needs "Allow auto-merge"
   (`gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true`) and branch protection
   that requires the CI checks. Without a required check, auto-merge merges before CI runs.
@@ -173,19 +206,7 @@ versions from memory:
   protection, skip the workflow and state that Dependabot pull requests need a manual merge.
 
 ### CodeRabbit
-- Write `.coderabbit.yaml`:
-  ```yaml
-  # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
-  language: en-US
-  reviews:
-    profile: chill
-    request_changes_workflow: false
-    high_level_summary: true
-    poem: false
-    auto_review:
-      enabled: true
-      drafts: false
-  ```
+- `templates/coderabbit.yaml`.
 - Check installation: `gh api repos/{owner}/{repo}/installation` fails without app admin
   rights, so ask the user instead. If the app is not installed, give the link
   `https://github.com/apps/coderabbitai/installations/new` and state that selecting
@@ -193,37 +214,17 @@ versions from memory:
 
 ### OpenSpec
 OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its files.
-`csggnn/simplicity-rules` is the reference setup.
 
 - Pin the CLI: `npm install --save-dev --save-exact --ignore-scripts @fission-ai/openspec@latest`.
   Set `"private": true` in `package.json`. Commit `package.json` and `package-lock.json`.
   Add `node_modules/` to `.gitignore`.
 - `npx openspec init --tools claude --no-animation` in the repo root.
-- Merge the `rules:` block of `openspec-rules.yaml` (in this skill's folder) into
+- Merge the `rules:` block of `templates/openspec-rules.yaml` into
   `openspec/config.yaml`. Repo-specific rules go after the shared rules of the same artifact.
 - The `.claude/skills/openspec-*` files are generated. Do not edit them.
-- Steps in the `check` job, after the other checks:
-  ```yaml
-      - name: Install OpenSpec
-        if: ${{ !cancelled() }}
-        run: npm ci --ignore-scripts --no-audit --no-fund
-
-      - name: Validate OpenSpec changes and specs
-        if: ${{ !cancelled() }}
-        run: npx openspec validate --all --no-interactive
-
-      - name: Check generated OpenSpec files match the pinned version
-        if: ${{ !cancelled() }}
-        run: |
-          npx openspec update --force > /dev/null
-          git diff --exit-code -- .claude
-  ```
-  A repo without a `check` job gets these steps in an `openspec` job in
-  `.github/workflows/openspec.yml`.
+- The `OpenSpec` block of `templates/ci.yml`.
 - Dependabot: the `npm` entry.
-- Copy `.github/workflows/openspec-regenerate.yml` from `csggnn/simplicity-rules`
-  (`gh api repos/csggnn/simplicity-rules/contents/.github/workflows/openspec-regenerate.yml -q .content | base64 -d`).
-  It regenerates the files on a Dependabot bump, approves the CI runs of its commit and
+- `templates/openspec-regenerate.yml`. It regenerates the files on a Dependabot bump, approves the CI runs of its commit and
   enables auto-merge. Auto-merge has the requirements listed under Dependabot.
 - When the approval step in the workflow fails, the Dependabot pull request stays open with
   CI runs awaiting approval. Approve them once in the Actions tab. After that merge, the
@@ -240,8 +241,7 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
 - Requires uv. Install uv first if missing, after asking.
 
 ### Hygiene files
-- `.editorconfig`: `root = true`, utf-8, lf, final newline, trim trailing whitespace,
-  4-space indent for Python, 2-space for YAML, JSON, JS/TS.
+- `templates/editorconfig` as `.editorconfig`.
 - `.gitignore`: language template entries plus `.env`, `.venv/`, `.claude/settings.local.json`.
 
 ### License

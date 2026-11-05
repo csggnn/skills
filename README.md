@@ -31,7 +31,7 @@ done
 
 ```
 skills/<name>/SKILL.md   frontmatter name and description, then the instructions
-skills/<name>/*          files the skill reads, e.g. setup-repo/openspec-rules.yaml
+skills/<name>/*          files the skill reads, e.g. setup-repo/templates/ci.yml
 ```
 
 ## License

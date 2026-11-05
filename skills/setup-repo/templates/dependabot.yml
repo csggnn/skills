@@ -1,0 +1,14 @@
+# One entry per ecosystem present, in this order: github-actions, pre-commit, uv or pip,
+# npm, gomod, cargo, docker. ECOSYSTEM is the ecosystem name. docker takes
+# `directories:` listing each folder that holds a Dockerfile.
+version: 2
+updates:
+  - package-ecosystem: ECOSYSTEM
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      ECOSYSTEM:
+        update-types: [minor, patch]
