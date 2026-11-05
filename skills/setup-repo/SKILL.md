@@ -197,8 +197,9 @@ versions from memory:
 
 ### Dependabot
 - `templates/dependabot.yml`, one entry per ecosystem present.
-- `templates/dependabot-automerge.yml`. It enables auto-merge on every Dependabot pull
-  request without a major version update.
+- `templates/dependabot-automerge.yml`. On each push to a Dependabot pull request it enables
+  auto-merge for a minor or patch update and disables it for any other update or failed
+  metadata. It is the only workflow that sets auto-merge.
 - Auto-merge needs "Allow auto-merge"
   (`gh api -X PATCH repos/{owner}/{repo} -F allow_auto_merge=true`) and branch protection
   that requires the CI checks. Without a required check, auto-merge merges before CI runs.
@@ -224,8 +225,8 @@ OpenSpec is a pinned dev dependency. Dependabot bumps it and CI regenerates its 
 - The `.claude/skills/openspec-*` files are generated. Do not edit them.
 - The `OpenSpec` block of `templates/ci.yml`.
 - Dependabot: the `npm` entry.
-- `templates/openspec-regenerate.yml`. It regenerates the files on a Dependabot bump, approves the CI runs of its commit and
-  enables auto-merge. Auto-merge has the requirements listed under Dependabot.
+- `templates/openspec-regenerate.yml`. It regenerates the files on a Dependabot bump and
+  approves the CI runs of its commit. `dependabot-automerge.yml` sets auto-merge.
 - When the approval step in the workflow fails, the Dependabot pull request stays open with
   CI runs awaiting approval. Approve them once in the Actions tab. After that merge, the
   bot's commit is on the default branch and later runs need no approval.
