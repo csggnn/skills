@@ -8,6 +8,7 @@ Agent skills for repository setup and git workflow.
 | `commit-properly` | Commits the changes on the current branch as tested, coherent commits with conventional messages. |
 | `start-task` | Creates a git worktree and branch for a Linear or GitHub issue. |
 | `open-issue` | Files a bug or task found in the current session as a GitHub issue. |
+| `explore-names` | Explores and selects names for a project, repository or skill in scored rounds that mix exploitation of liked names with exploration of new directions. |
 
 ## Install
 
